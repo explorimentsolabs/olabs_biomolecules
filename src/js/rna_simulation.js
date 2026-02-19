@@ -1139,10 +1139,9 @@ export function renderRNASimulation() {
     
     if (type === 'A') {      
       vertices.push({ x: -R, z: -D, angle: -6*Math.PI/6});
-    } else if (type === 'U') {            
+    } else if (type === 'U') {
       vertices.push({ x: -R * 0.866, z: -R * 0.5, angle: -5*Math.PI/6 });
       vertices.push({ x: R * 0.866, z: -R * 0.5, angle: -Math.PI/6 });
-      vertices.push({ x: -R * 0.866, z: R * 0.5, angle: -7*Math.PI/6 });
     } else if (type === 'G') {      
       vertices.push({ x: -R, z: -D, angle: -6*Math.PI/6});
       vertices.push({ x: sideLength*0.5, z: -2*D, angle: -2*Math.PI/6});
