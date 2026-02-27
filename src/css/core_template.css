@@ -30,12 +30,13 @@
   font-style: normal;
 }
 
-/* Noto Sans Devanagari - for Hindi text */
+/* Kokila - for Hindi text */
 @font-face {
-  font-family: 'Noto Sans Devanagari';
-  src: url('./fonts/NotoSansDevanagari-VariableFont_wdth,wght.ttf') format('truetype-variations');
+  font-family: 'Kokila';
+  src: url('./fonts/Kokila.woff2') format('woff2');
   font-weight: 400 700;
   font-style: normal;
+  font-display: swap;
 }
 
 body {
@@ -50,16 +51,16 @@ body {
 
 /* Hindi language specific styles */
 body[data-language="hi"] {
-  font-family: 'Noto Sans Devanagari', 'Poppins', Arial, sans-serif;
+  font-family: 'Kokila', 'Poppins', Arial, sans-serif;
 }
 
 body[data-language="hi"] .sim-title {
-  font-family: 'Noto Sans Devanagari', 'Happy Monkey', auto;
+  font-family: 'Kokila', 'Happy Monkey', auto;
 }
 
 body[data-language="hi"] .sim-section-title,
 body[data-language="hi"] .sim-section-title-underline {
-  font-family: 'Noto Sans Devanagari', 'Happy Monkey', auto;
+  font-family: 'Kokila', 'Happy Monkey', auto;
 }
 
 .embed-container {
@@ -83,6 +84,8 @@ body[data-language="hi"] .sim-section-title-underline {
   flex-direction: column;
   justify-content: center;
   align-items: center;
+  width: 1440px;
+  min-height: 810px;
 }
 
 #app {

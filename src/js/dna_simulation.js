@@ -8,7 +8,6 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 
-import homeButtonImg from '../images/home_button.png';
 import cursorHandImg from '../images/cursor_hand.png';
 import starImg from '../images/star.png';
 
@@ -19,8 +18,20 @@ export function renderDNASimulation() {
 
   const app = document.getElementById('app');
   app.innerHTML = `
-    <button id="home-btn" class="sim-btn" style="background: #000000; position: absolute; top: 18px; left: 0px; margin-top: 1rem; margin-left: 1.4rem; padding: 1.0rem 1.5rem; font-weight: bold; font-size: 1.1rem; box-shadow: 0 2px 4px #0002;"><img src="${homeButtonImg}" style="width: 1.1rem; height: 1.1rem; vertical-align: top; margin-right: 8px;">${t('mainMenuButton')}</button>
-    <div class="sim-title">${t('title')}</div>
+    <div style="display: flex; align-items: center; width: 100%; margin-bottom: 1.2rem;">
+      <div style="display: flex; gap: 0.5rem; margin-left: 1.5rem; flex-shrink: 0;">
+        <button id="nav-back-btn" class="nav-icon-btn" title="Back" disabled>
+          <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <button id="home-btn" class="nav-icon-btn" title="Home">
+          <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        </button>
+        <button id="nav-next-btn" class="nav-icon-btn" title="Next" disabled>
+          <svg viewBox="0 0 24 24"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+        </button>
+      </div>
+      <div class="sim-title" style="margin: 0 auto;">${t('title')}</div>
+    </div>
     <div style="display: flex; flex-direction: row; width: 100%;">
       <div class="sim-content-no-padding" id="ff-sim-card" style="flex: 4; position: relative; max-width: 1080px; width: 1080px; height: 675px; overflow: hidden; margin-left: 1.5rem;">
         <div class="sim-absolute-container" style="position: relative; width: 100%; height: 100%;">
@@ -52,10 +63,12 @@ export function renderDNASimulation() {
   // interaction state
   let raycaster; 
   let ndcPointer; 
-  let isDraggingDNA = false; 
-  let previousPointer = { x: 0, y: 0 }; 
+  let isDraggingDNA = false;
+  let activePointerId = null;
+  let previousPointer = { x: 0, y: 0 };
   const orbitSpherical = new THREE.Spherical();
   let autoRotate = true;
+  let skipAnimations = false;
   let numPairsGlobal = 0;
   const elements = {
     sugars1: [],
@@ -155,8 +168,9 @@ export function renderDNASimulation() {
     const el = renderer.domElement;
     el.addEventListener('pointerdown', onPointerDown);
     el.addEventListener('pointermove', onPointerMove);
-    el.addEventListener('pointerup', onPointerUpOrLeave);
-    el.addEventListener('pointerleave', onPointerUpOrLeave);
+    el.addEventListener('pointerup', onPointerUpOrCancel);
+    el.addEventListener('pointercancel', onPointerUpOrCancel);
+    el.addEventListener('pointerleave', onPointerUpOrCancel);
   }
 
   function onResize() {
@@ -2026,6 +2040,188 @@ export function renderDNASimulation() {
     scene.add(dnaGroup);
   }
 
+  function scheduleOrExec(fn, delayMs) {
+    if (skipAnimations) { fn(); } else { setTimeout(fn, delayMs); }
+  }
+
+  function updateDynamicBonds() {
+    // Sugar→Base
+    for (let i = 0; i < elements.bases1.length; i++) {
+      const sugarPos1 = elements.sugars1[i].mesh.position;
+      const baseMesh1 = elements.bases1[i].mesh;
+      const baseType1 = elements.baseTypes1[i];
+      const baseAttach1 = getBaseSugarAttachmentPoint(baseMesh1, sugarPos1, baseType1);
+
+      const msb1 = unwind.live.bondsSugarBase[i * 2 + 0].mesh;
+      msb1.geometry.dispose();
+      msb1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos1.distanceTo(baseAttach1), 12);
+      const mid1 = new THREE.Vector3().addVectors(sugarPos1, baseAttach1).multiplyScalar(0.5);
+      msb1.position.copy(mid1);
+      msb1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(baseAttach1, sugarPos1).normalize());
+    }
+    for (let i = 0; i < elements.bases2.length; i++) {
+      const sugarPos2 = elements.sugars2[i].mesh.position;
+      const baseMesh2 = elements.bases2[i].mesh;
+      const baseType2 = elements.baseTypes2[i];
+      const baseAttach2 = getBaseSugarAttachmentPoint(baseMesh2, sugarPos2, baseType2);
+
+      const msb2 = unwind.live.bondsSugarBase[i * 2 + 1].mesh;
+      msb2.geometry.dispose();
+      msb2.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos2.distanceTo(baseAttach2), 12);
+      const mid2 = new THREE.Vector3().addVectors(sugarPos2, baseAttach2).multiplyScalar(0.5);
+      msb2.position.copy(mid2);
+      msb2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(baseAttach2, sugarPos2).normalize());
+    }
+
+    // Strand 1 phosphodiester
+    for (let k = 0; k < elements.phosphates1.length; k++) {
+      const i = k;
+      const sugarPos1 = elements.sugars1[i].mesh.position;
+      const sugarPosNext1 = elements.sugars1[i + 1].mesh.position;
+      const ph = elements.phosphates1[k].mesh.position;
+
+      const b1 = unwind.live.bondsPhospho1[k].mesh;
+      const b2 = unwind.live.bondsPhospho1_3[k].mesh;
+      b1.geometry.dispose(); b2.geometry.dispose();
+      b1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos1.distanceTo(ph), 12);
+      b2.geometry = new THREE.CylinderGeometry(0.08, 0.08, ph.distanceTo(sugarPosNext1), 12);
+      const midA = new THREE.Vector3().addVectors(sugarPos1, ph).multiplyScalar(0.5);
+      const midB = new THREE.Vector3().addVectors(ph, sugarPosNext1).multiplyScalar(0.5);
+      b1.position.copy(midA); b2.position.copy(midB);
+      b1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(ph, sugarPos1).normalize());
+      b2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(sugarPosNext1, ph).normalize());
+    }
+
+    // Strand 2 phosphodiester
+    for (let k = 0; k < elements.phosphates2.length; k++) {
+      const i = elements.phosphates2[k].i;
+      const sugarPos2 = elements.sugars2[i].mesh.position;
+      const sugarPosPrev2 = elements.sugars2[i - 1].mesh.position;
+      const ph = elements.phosphates2[k].mesh.position;
+
+      const b1 = unwind.live.bondsPhospho2[k].mesh;
+      const b2 = unwind.live.bondsPhospho2_3[k].mesh;
+      b1.geometry.dispose(); b2.geometry.dispose();
+      b1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos2.distanceTo(ph), 12);
+      b2.geometry = new THREE.CylinderGeometry(0.08, 0.08, ph.distanceTo(sugarPosPrev2), 12);
+      const midA = new THREE.Vector3().addVectors(sugarPos2, ph).multiplyScalar(0.5);
+      const midB = new THREE.Vector3().addVectors(ph, sugarPosPrev2).multiplyScalar(0.5);
+      b1.position.copy(midA); b2.position.copy(midB);
+      b1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(ph, sugarPos2).normalize());
+      b2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(sugarPosPrev2, ph).normalize());
+    }
+
+    // Hydrogen bonds
+    let idx = 0;
+    for (let i = 0; i < numPairsGlobal; i++) {
+      const kind = elements.basePairKinds[i] || 'AT';
+      const hb = kind === 'AT' ? 2 : 3;
+
+      const baseType1 = elements.baseTypes1[i];
+      const baseType2 = elements.baseTypes2[i];
+      const hexCenter1 = getHexagonCenter(elements.bases1[i].mesh, baseType1);
+      const hexCenter2 = getHexagonCenter(elements.bases2[i].mesh, baseType2);
+
+      for (let h = 0; h < hb; h++) {
+        const { mesh } = unwind.live.bondsHydrogen[idx++];
+
+        const offset = (h - (hb - 1) / 2) * 0.3;
+        const a = hexCenter1.clone();
+        const b = hexCenter2.clone();
+        a.z += offset; b.z += offset;
+
+        mesh.geometry.dispose();
+        mesh.geometry = new THREE.CylinderGeometry(0.06, 0.06, a.distanceTo(b), 12);
+        const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+        mesh.position.copy(mid);
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(b, a).normalize());
+      }
+    }
+  }
+
+  function applyTargets(elems, targets) {
+    const keys = Object.keys(targets);
+    for (const key of keys) {
+      const arr = elems[key];
+      const tgts = targets[key];
+      if (!arr || !tgts) continue;
+      for (let i = 0; i < arr.length; i++) {
+        if (tgts[i]) {
+          arr[i].mesh.position.copy(tgts[i].pos);
+          arr[i].mesh.quaternion.copy(tgts[i].quat);
+        }
+      }
+    }
+  }
+
+  function finishAllAnimations() {
+    // 1. Camera
+    if (cameraAnimation.active) {
+      camera.position.copy(cameraAnimation.targetCameraPos);
+      controls.target.copy(cameraAnimation.targetTargetPos);
+      cameraAnimation.active = false;
+      controls.update();
+      if (cameraAnimation.onComplete) cameraAnimation.onComplete();
+    }
+    // 2. Unwind
+    if (unwind.started && !unwind.finished) {
+      applyTargets(elements, unwind.targets);
+      dnaGroup.setRotationFromQuaternion(unwind.groupTargetQuat);
+      updateDynamicBonds();
+      unwind.started = false;
+      unwind.finished = true;
+      createLabelsForElements();
+    }
+    // 3. Expansion
+    if (expansion.started && !expansion.finished) {
+      applyTargets(elements, expansion.targets);
+      expansion.started = false;
+      expansion.finished = true;
+      addProngsToAllBases();
+      renderExpandedBonds();
+    }
+  }
+
+  function completeCurrentStep() {
+    finishAllAnimations();
+  }
+
+  function updateNavButtons() {
+    const backBtn = document.getElementById('nav-back-btn');
+    const nextNavBtn = document.getElementById('nav-next-btn');
+    if (backBtn) backBtn.disabled = (state.step <= 0);
+    if (nextNavBtn) nextNavBtn.disabled = (state.step >= 6);
+  }
+
+  function navigateToStep(targetStep) {
+    if (targetStep < 0 || targetStep > 6) return;
+    if (targetStep === state.step) return;
+
+    skipAnimations = true;
+
+    // Reset to initial 3D state
+    revertToOriginalHelix();
+    autoRotate = true;
+    cameraAnimation.active = false;
+    camera.position.set(0, 35, 100);
+    controls.target.set(0.0, 0.0, 100.0);
+    controls.update();
+
+    // Replay each step from 0 to (targetStep - 1)
+    for (let s = 0; s < targetStep; s++) {
+      state.step = s;
+      updateStateAndUI();
+      completeCurrentStep();
+    }
+
+    // Set up the target step (let its animations play normally)
+    state.step = targetStep;
+    updateStateAndUI();
+
+    skipAnimations = false;
+    updateNavButtons();
+  }
+
   function animate() {
     animationFrameId = requestAnimationFrame(animate);
     
@@ -2088,101 +2284,7 @@ export function renderDNASimulation() {
           dnaGroup.setRotationFromQuaternion(q);
         }
 
-        // Update dynamic bonds so connectivity persists during unwind
-        // Sugar→Base - connections to actual base surfaces accounting for orientation
-        for (let i = 0; i < elements.bases1.length; i++) {
-          const sugarPos1 = elements.sugars1[i].mesh.position;
-          const baseMesh1 = elements.bases1[i].mesh;
-          const baseType1 = elements.baseTypes1[i];
-          const baseAttach1 = getBaseSugarAttachmentPoint(baseMesh1, sugarPos1, baseType1);
-          
-          const msb1 = unwind.live.bondsSugarBase[i * 2 + 0].mesh;
-          msb1.geometry.dispose();
-          msb1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos1.distanceTo(baseAttach1), 12);
-          const mid1 = new THREE.Vector3().addVectors(sugarPos1, baseAttach1).multiplyScalar(0.5);
-          msb1.position.copy(mid1);
-          msb1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(baseAttach1, sugarPos1).normalize());
-        }
-        for (let i = 0; i < elements.bases2.length; i++) {
-          const sugarPos2 = elements.sugars2[i].mesh.position;
-          const baseMesh2 = elements.bases2[i].mesh;
-          const baseType2 = elements.baseTypes2[i];
-          const baseAttach2 = getBaseSugarAttachmentPoint(baseMesh2, sugarPos2, baseType2);
-          
-          const msb2 = unwind.live.bondsSugarBase[i * 2 + 1].mesh;
-          msb2.geometry.dispose();
-          msb2.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos2.distanceTo(baseAttach2), 12);
-          const mid2 = new THREE.Vector3().addVectors(sugarPos2, baseAttach2).multiplyScalar(0.5);
-          msb2.position.copy(mid2);
-          msb2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(baseAttach2, sugarPos2).normalize());
-        }
-
-        // Strand 1 phosphodiester - simple center-to-center connections
-        for (let k = 0; k < elements.phosphates1.length; k++) {
-          const i = k;
-          const sugarPos1 = elements.sugars1[i].mesh.position;
-          const sugarPosNext1 = elements.sugars1[i + 1].mesh.position;
-          const ph = elements.phosphates1[k].mesh.position;
-          
-          const b1 = unwind.live.bondsPhospho1[k].mesh;
-          const b2 = unwind.live.bondsPhospho1_3[k].mesh;
-          b1.geometry.dispose(); b2.geometry.dispose();
-          b1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos1.distanceTo(ph), 12);
-          b2.geometry = new THREE.CylinderGeometry(0.08, 0.08, ph.distanceTo(sugarPosNext1), 12);
-          const midA = new THREE.Vector3().addVectors(sugarPos1, ph).multiplyScalar(0.5);
-          const midB = new THREE.Vector3().addVectors(ph, sugarPosNext1).multiplyScalar(0.5);
-          b1.position.copy(midA); b2.position.copy(midB);
-          b1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(ph, sugarPos1).normalize());
-          b2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(sugarPosNext1, ph).normalize());
-        }
-
-        // Strand 2 phosphodiester - simple center-to-center connections
-        for (let k = 0; k < elements.phosphates2.length; k++) {
-          const i = elements.phosphates2[k].i;
-          const sugarPos2 = elements.sugars2[i].mesh.position;
-          const sugarPosPrev2 = elements.sugars2[i - 1].mesh.position;
-          const ph = elements.phosphates2[k].mesh.position;
-          
-          const b1 = unwind.live.bondsPhospho2[k].mesh;
-          const b2 = unwind.live.bondsPhospho2_3[k].mesh;
-          b1.geometry.dispose(); b2.geometry.dispose();
-          b1.geometry = new THREE.CylinderGeometry(0.08, 0.08, sugarPos2.distanceTo(ph), 12);
-          b2.geometry = new THREE.CylinderGeometry(0.08, 0.08, ph.distanceTo(sugarPosPrev2), 12);
-          const midA = new THREE.Vector3().addVectors(sugarPos2, ph).multiplyScalar(0.5);
-          const midB = new THREE.Vector3().addVectors(ph, sugarPosPrev2).multiplyScalar(0.5);
-          b1.position.copy(midA); b2.position.copy(midB);
-          b1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(ph, sugarPos2).normalize());
-          b2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(sugarPosPrev2, ph).normalize());
-        }
-
-        // Hydrogen bonds - using hexagon centers instead of combined base centers
-        let idx = 0;
-        for (let i = 0; i < numPairsGlobal; i++) {
-          const kind = elements.basePairKinds[i] || 'AT';
-          const hb = kind === 'AT' ? 2 : 3;
-          
-          // Get hexagon centers for both bases
-          const baseType1 = elements.baseTypes1[i];
-          const baseType2 = elements.baseTypes2[i];
-          const hexCenter1 = getHexagonCenter(elements.bases1[i].mesh, baseType1);
-          const hexCenter2 = getHexagonCenter(elements.bases2[i].mesh, baseType2);
-          
-          for (let h = 0; h < hb; h++) {
-            const { mesh } = unwind.live.bondsHydrogen[idx++];
-            
-            // Apply offset to hexagon centers
-            const offset = (h - (hb - 1) / 2) * 0.3;
-            const a = hexCenter1.clone();
-            const b = hexCenter2.clone();
-            a.z += offset; b.z += offset;
-            
-            mesh.geometry.dispose();
-            mesh.geometry = new THREE.CylinderGeometry(0.06, 0.06, a.distanceTo(b), 12);
-            const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
-            mesh.position.copy(mid);
-            mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(b, a).normalize());
-          }
-        }
+        updateDynamicBonds();
 
         if (tNorm >= 1) {
           unwind.started = false;
@@ -2252,19 +2354,22 @@ export function renderDNASimulation() {
   function onPointerDown(event) {
     if (!renderer || !camera) return;
     if (event.button !== 0) return; // left only
+    event.preventDefault();
     screenToNDC(event, renderer.domElement);
     if (!intersectsDNA()) return;
     isDraggingDNA = true;
+    activePointerId = event.pointerId;
     previousPointer.x = event.clientX;
     previousPointer.y = event.clientY;
-    controls.enabled = false; // avoid conflicts while custom-dragging
+    controls.enabled = false;
     renderer.domElement.style.cursor = 'grabbing';
-    event.preventDefault();
+    try { renderer.domElement.setPointerCapture(event.pointerId); } catch (_) {}
   }
 
   function onPointerMove(event) {
     if(state.step >= 2 && state.step<6) return;
     if (!isDraggingDNA) return;
+    if (event.pointerId !== activePointerId) return;
     const dx = event.clientX - previousPointer.x;
     const dy = event.clientY - previousPointer.y;
     previousPointer.x = event.clientX;
@@ -2284,11 +2389,14 @@ export function renderDNASimulation() {
     }
   }
 
-  function onPointerUpOrLeave() {
+  function onPointerUpOrCancel(event) {
     if (!isDraggingDNA) return;
+    if (event && event.pointerId !== activePointerId) return;
     isDraggingDNA = false;
+    activePointerId = null;
     controls.enabled = true;
     renderer.domElement.style.cursor = '';
+    try { renderer.domElement.releasePointerCapture(event.pointerId); } catch (_) {}
   }
 
   function toggleRailsVisualization() {
@@ -2579,7 +2687,7 @@ export function renderDNASimulation() {
         nextBtn.textContent = t('viewBondsButton');
       }
       animateCameraZoom(0.5, 1000);
-      setTimeout(() => {
+      scheduleOrExec(() => {
         showAllElementsAtFullOpacity();
       }, 100);
     } else if(state.step === 4){
@@ -2617,13 +2725,29 @@ export function renderDNASimulation() {
       );      
     }
     updateInstructions();
+    updateNavButtons();
   }
 
-  const homeBtn = document.getElementById('home-btn');
-  homeBtn.onclick = () => {
+  // Home button
+  document.getElementById('home-btn').onclick = () => {
     renderWelcomeScreen();
   };
 
+  // Header Back button
+  document.getElementById('nav-back-btn').onclick = () => {
+    if (state.step > 0) navigateToStep(state.step - 1);
+  };
+
+  // Header Next button — skip current and advance
+  document.getElementById('nav-next-btn').onclick = () => {
+    if (state.step >= 6) return;
+    completeCurrentStep();
+    state.step++;
+    updateStateAndUI();
+    updateNavButtons();
+  };
+
+  // In-panel Next button — keep current behavior (blocked during animations)
   const nextBtn = document.getElementById('next-btn');
   nextBtn.onclick = () => {
     if (unwind.started && !unwind.finished) {
@@ -2636,7 +2760,8 @@ export function renderDNASimulation() {
       renderNucliecAcidSelectionScreen();
     } else {
       state.step++;
-      updateStateAndUI();      
+      updateStateAndUI();
+      updateNavButtons();
     }
   };
   updateStateAndUI();

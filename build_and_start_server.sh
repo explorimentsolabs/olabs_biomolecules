@@ -74,9 +74,9 @@ if [ ! -d "dist" ]; then
 fi
 
 # Change to dist directory and start Python HTTP server
-print_status "Changing to dist directory and starting Python HTTP server on port 8000..."
+print_status "Changing to dist directory and starting Python HTTP server on port 9001..."
 cd dist
-python3 -m http.server 8000
+python3 -m http.server 9001
 if [ $? -ne 0 ]; then
     print_error "Failed to start the Python HTTP server."
     exit 1
